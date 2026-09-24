@@ -1,0 +1,63 @@
+name: VoiceTranscriber
+
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+packages:
+  # NOTE: confirm this tag is still current when Xcode resolves the package;
+  # bump the `from:` version if FluidAudio has moved on.
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio
+    from: 0.12.4
+
+targets:
+  VoiceTranscriber:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: VoiceTranscriber
+    info:
+      path: VoiceTranscriber/Info.plist
+      properties:
+        UILaunchScreen: {}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.VoiceTranscriber
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.10"
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ENABLE_PREVIEWS: true
+    dependencies:
+      - package: FluidAudio
+
+  VoiceTranscriberTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: VoiceTranscriberTests
+    settings:
+      base:
+        SWIFT_VERSION: "5.10"
+    dependencies:
+      - target: VoiceTranscriber
+
+schemes:
+  VoiceTranscriber:
+    build:
+      targets:
+        VoiceTranscriber: all
+        VoiceTranscriberTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - VoiceTranscriberTests
+    archive:
+      config: Release

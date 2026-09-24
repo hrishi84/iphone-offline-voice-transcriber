@@ -23,14 +23,16 @@ We are committed to providing a welcoming and inclusive environment for all cont
 git clone <repository>
 cd iphone-offline-voice-transcriber
 
-# Python environment
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# Install XcodeGen (one time)
+brew install xcodegen
 
-# Open iOS project
-open ios/VoiceTranscriber.xcodeproj
+# Generate and open the Xcode project
+cd ios
+xcodegen generate
+open VoiceTranscriber.xcodeproj
 ```
+
+`VoiceTranscriber.xcodeproj` is generated from `ios/project.yml` and is not committed — re-run `xcodegen generate` whenever you change `project.yml`.
 
 ## Code Style
 
@@ -41,33 +43,14 @@ open ios/VoiceTranscriber.xcodeproj
 - Use meaningful variable and function names
 - Add comments for complex logic
 
-### Python
-
-- Follow [PEP 8](https://pep8.org/)
-- Use `black` for formatting
-- Use `mypy` for type checking
-- Use `flake8` for linting
-
-```bash
-black scripts/
-flake8 scripts/
-mypy scripts/
-```
-
 ## Testing
-
-### Swift Tests
 
 ```bash
 cd ios
-xcodebuild test -scheme VoiceTranscriber
+xcodebuild test -scheme VoiceTranscriber -destination 'platform=iOS Simulator,name=iPhone 15'
 ```
 
-### Python Tests
-
-```bash
-pytest tests/ -v --cov=scripts/
-```
+The test target covers `TextCleanup` only — it's the one piece of logic that doesn't need a physical device or a live model.
 
 ## Commit Messages
 
@@ -93,9 +76,9 @@ Add feature: brief description
 
 ### High Priority
 
-- [ ] Complete CoreML model inference implementation
-- [ ] Add streaming audio transcription
-- [ ] Implement multi-language support
+- [ ] Streaming (live) transcription via FluidAudio's sliding-window ASR manager
+- [ ] Multi-language support via Parakeet TDT v3
+- [ ] Verify `FluidAudioTranscriptionEngine`'s API calls against a resolved FluidAudio package and fix any drift
 - [ ] Add comprehensive error handling
 
 ### Medium Priority

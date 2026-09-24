@@ -3,247 +3,103 @@
 ## System Requirements
 
 ### macOS (Development)
-- macOS 11.0 or later
-- Xcode 14.0 or later
-- Python 3.9 or later
-- 5GB free disk space
+
+- macOS with Xcode 16.0 or later
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
+- An Apple Developer account (free tier is enough for on-device debug builds)
 
 ### iOS (Target)
-- iOS 16.0 or later
-- iPhone with Neural Engine (A14 Bionic or newer recommended)
-- 2GB free storage for model
-- 4GB RAM minimum
 
-## Development Environment Setup
+- iOS 17.0 or later
+- A **physical iPhone** with a Neural Engine (A12 Bionic or newer) — the Simulator cannot meaningfully run Parakeet TDT inference on the ANE, so simulator builds are compile checks only, not functional tests
+- ~1GB free storage for the cached model
+- Wi-Fi or cellular for the one-time model download
+
+## Setup
 
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/iphone-offline-voice-transcriber.git
+git clone https://github.com/hrishi84/iphone-offline-voice-transcriber.git
 cd iphone-offline-voice-transcriber
 ```
 
-### 2. Install Python Dependencies
+### 2. Install XcodeGen
 
 ```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install requirements
-pip install -r requirements.txt
+brew install xcodegen
 ```
 
-### 3. Install Xcode Command Line Tools
-
-```bash
-xcode-select --install
-```
-
-Verify installation:
-```bash
-xcode-select --version
-```
-
-### 4. Download the Model
-
-```bash
-# Using the provided script
-python3 scripts/download_model.py
-
-# Or manual download from NGC
-wget https://api.ngc.nvidia.com/v2/models/nvidia_ngc/parakeet_tdt_0_6b_v2/versions/1/files/model.onnx \
-  -O models/parakeet_tdt_0.6b_v2.onnx
-```
-
-### 5. Convert Model to CoreML
-
-```bash
-# Full precision model
-python3 scripts/convert_model.py \
-  --onnx-model models/parakeet_tdt_0.6b_v2.onnx \
-  --output models/parakeet_tdt_0.6b_v2.mlmodel
-
-# Or quantized model (recommended)
-python3 scripts/convert_model.py \
-  --onnx-model models/parakeet_tdt_0.6b_v2.onnx \
-  --output models/parakeet_tdt_0.6b_v2_quantized.mlmodel \
-  --quantize int8
-```
-
-### 6. Copy Model to Xcode Project
-
-```bash
-mkdir -p ios/VoiceTranscriber/Resources/Models
-cp models/parakeet_tdt_0.6b_v2_quantized.mlmodel \
-   ios/VoiceTranscriber/Resources/Models/
-```
-
-### 7. Open iOS Project
-
-```bash
-open ios/VoiceTranscriber.xcodeproj
-```
-
-### 8. Configure Signing
-
-In Xcode:
-1. Select the VoiceTranscriber project
-2. Select the VoiceTranscriber target
-3. Go to Signing & Capabilities
-4. Select your team
-5. Set Bundle Identifier (e.g., com.yourcompany.voicetranscriber)
-
-### 9. Build and Run
-
-```bash
-# Using Xcode
-# Select your device, press Cmd + R
-
-# Or using xcodebuild
-xcodebuild -scheme VoiceTranscriber \
-  -configuration Debug \
-  -sdk iphoneos \
-  -destination 'platform=iOS Simulator,name=iPhone 14'
-```
-
-## Docker Setup (Optional)
-
-For consistent development environment:
-
-```bash
-# Build Docker image
-docker build -t voice-transcriber .
-
-# Run container
-docker run -it -v $(pwd):/workspace voice-transcriber /bin/bash
-
-# Inside container
-cd /workspace
-python3 scripts/download_model.py
-python3 scripts/convert_model.py --onnx-model models/parakeet_tdt_0.6b_v2.onnx --output models/parakeet_tdt_0.6b_v2.mlmodel
-```
-
-## Troubleshooting Installation
-
-### Issue: Python Version Mismatch
-
-```bash
-# Check Python version
-python3 --version
-
-# Should be 3.9+
-# If not, install Python 3.9+
-brew install python@3.11
-```
-
-### Issue: Xcode Not Found
-
-```bash
-# Install Xcode from App Store or use:
-xcode-select --install
-
-# If already installed but not in PATH:
-sudo xcode-select --reset
-```
-
-### Issue: Model Download Failed
-
-```bash
-# Check internet connection
-curl -I https://api.ngc.nvidia.com
-
-# Manual download
-# Visit: https://catalog.ngc.nvidia.com/orgs/nvidia_ngc/models/parakeet_tdt_0.6b_v2
-# Download manually and place in models/
-```
-
-### Issue: CoreML Conversion Error
-
-```bash
-# Check coremltools version
-python3 -c "import coremltools; print(coremltools.__version__)"
-
-# Should be 7.0+
-pip install --upgrade coremltools
-```
-
-### Issue: Pod Installation Failed
-
-If using CocoaPods (optional):
+### 3. Generate the Xcode Project
 
 ```bash
 cd ios
-pod install
-cd ..
+xcodegen generate
 ```
 
-## Post-Installation Verification
+This reads `ios/project.yml` and produces `VoiceTranscriber.xcodeproj`. The generated project is not committed to git (it's regenerated from `project.yml`), so re-run this command whenever `project.yml` changes.
 
-### 1. Verify Python Setup
+### 4. Open in Xcode
 
 ```bash
-python3 -c "
-import torch
-import onnx
-import coremltools
-import librosa
-print('✓ All Python packages installed correctly')
-"
+open VoiceTranscriber.xcodeproj
 ```
 
-### 2. Verify Model File
+Xcode resolves the [FluidAudio](https://github.com/FluidInference/FluidAudio) Swift Package automatically on first open. If it reports a version conflict, check `packages.FluidAudio.from` in `ios/project.yml` against FluidAudio's current releases and adjust.
+
+### 5. Configure Signing
+
+1. Select the `VoiceTranscriber` project → the `VoiceTranscriber` target → **Signing & Capabilities**.
+2. Choose your team.
+3. `project.yml` ships with a placeholder bundle id prefix (`com.example`). Change `options.bundleIdPrefix` (and `PRODUCT_BUNDLE_IDENTIFIER` under the target's `settings.base`) to your own reverse-DNS prefix, then re-run `xcodegen generate`.
+
+### 6. Build and Run
+
+Select a physical iPhone as the destination and press `Cmd + R`, or from the command line (run from the repo root):
 
 ```bash
-ls -lh models/parakeet_tdt_0.6b_v2.mlmodel
-# Should show file with size ~150MB (quantized) or 600MB (full)
-```
-
-### 3. Verify Xcode Project
-
-```bash
-xcodebuild -list -project ios/VoiceTranscriber.xcodeproj
-# Should show schemes and targets
-```
-
-### 4. Test on Simulator
-
-```bash
-# Start simulator
-xcrun simctl create "iPhone 14" "com.apple.CoreSimulator.SimDeviceType.iPhone-14"
-
-# Build for simulator
-xcodebuild -scheme VoiceTranscriber \
+xcodebuild -project ios/VoiceTranscriber.xcodeproj \
+  -scheme VoiceTranscriber \
   -configuration Debug \
-  -sdk iphonesimulator \
-  -destination 'platform=iOS Simulator,name=iPhone 14'
+  -destination 'generic/platform=iOS' \
+  build
 ```
 
-## IDE Setup
+(Deploying to a specific device over `xcodebuild` requires its UDID — using Xcode's Run button is simpler for day-to-day development.)
 
-### Visual Studio Code
+### 7. First Run
 
-Install extensions:
-- Swift for Visual Studio Code
-- Python
-- iOS App Installer
+1. Grant microphone access when prompted.
+2. Stay connected to Wi-Fi/cellular while the app downloads the Parakeet TDT 0.6B v2 model (~450–600MB, one time).
+3. Once loaded, try Airplane Mode — transcription should keep working.
 
-### JetBrains AppCode
+## Running Tests
 
-1. Open project in AppCode
-2. Go to Preferences → Project Settings → Build
-3. Set iOS SDK
+```bash
+xcodebuild test \
+  -project ios/VoiceTranscriber.xcodeproj \
+  -scheme VoiceTranscriber \
+  -destination 'platform=iOS Simulator,name=iPhone 15'
+```
+
+The test target only covers `TextCleanup` (deterministic logic) — it doesn't exercise FluidAudio or the microphone, so it's fine to run on the simulator.
+
+## Troubleshooting
+
+**"No such module 'FluidAudio'"**
+Xcode hasn't resolved the Swift Package yet. File → Packages → Resolve Package Versions.
+
+**Model download stalls or fails**
+Check network connectivity; the download is a few hundred MB from Hugging Face. Killing and relaunching the app resumes from FluidAudio's cache, it doesn't re-download from scratch each time.
+
+**Transcription is slow or the app is unresponsive on the Simulator**
+Expected — the Simulator doesn't have a real Neural Engine. Test on a physical device.
+
+**Signing errors**
+Make sure you've set your own team and bundle identifier prefix as described in step 5; the default `com.example.VoiceTranscriber` bundle id isn't yours to sign with.
 
 ## Next Steps
 
-1. Review [Architecture](ARCHITECTURE.md) for system design
-2. Follow [Quick Start Guide](../README.md#quick-start) for first run
-3. Check [Contributing Guidelines](CONTRIBUTING.md) to contribute
-
-## Support
-
-If you encounter issues:
-
-1. Check [Troubleshooting Guide](TROUBLESHOOTING.md)
-2. Search [GitHub Issues](https://github.com/yourusername/iphone-offline-voice-transcriber/issues)
-3. Ask in [Discussions](https://github.com/yourusername/iphone-offline-voice-transcriber/discussions)
+- [Architecture](ARCHITECTURE.md)
+- [Model Acquisition](MODEL_ACQUISITION.md)
+- [Contributing](CONTRIBUTING.md)

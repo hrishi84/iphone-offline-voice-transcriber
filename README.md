@@ -1,233 +1,97 @@
 # iPhone Offline Voice Transcriber
 
-A lightweight iOS application that performs offline speech-to-text transcription using NVIDIA Parakeet TDT 0.6B v2 model. No internet connection required, all processing happens on-device.
+A native iOS app that transcribes speech to clean text entirely on-device, using NVIDIA's Parakeet TDT 0.6B v2 model running on the Apple Neural Engine. No internet connection required for transcription, no cloud service, no AI subscription. Inspired by [typevoice](https://github.com/warplabshq/typevoice), the macOS version of this idea.
+
+## How it works
+
+Speech recognition is powered by [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache 2.0), a Swift package that ships a pre-converted Core ML build of Parakeet TDT 0.6B v2 and runs it on the Apple Neural Engine. FluidAudio downloads and caches the model (~450–600MB) the first time the app runs — after that, transcription works with the device fully offline (try it in Airplane Mode).
+
+There is no model conversion step in this repo. Earlier versions of this project tried to hand-convert Parakeet TDT from ONNX to Core ML with a Python script — that never worked, because a transducer model (encoder + prediction network + joint network + beam search decode loop) can't be converted with a single generic `coremltools.convert()` call, and the NGC URL it pointed at didn't even exist. FluidAudio's pre-built Core ML package replaces all of that.
 
 ## Features
 
-- 🎤 Real-time audio recording and transcription
-- 📴 Completely offline - no cloud dependencies
-- ⚡ Lightweight model (600MB) optimized for mobile
-- 🔒 Privacy-first - audio never leaves your device
-- 🎯 High accuracy speech recognition
-- 📱 Native iOS UI with SwiftUI
-- 🌐 Support for multiple languages
+- On-device speech-to-text using Parakeet TDT 0.6B v2
+- Fully offline after the one-time model download
+- No account, no subscription, no telemetry
+- Deterministic rule-based text cleanup (whitespace, capitalization, filler-word removal) — no extra AI model involved
+- Copy or Share the transcript into Messages, Mail, Notes, or any other app
 
 ## Requirements
 
-- iOS 16.0 or later
-- iPhone with Neural Engine (A14 Bionic or newer recommended)
-- 2GB free storage for model
-- Minimum 4GB RAM
-
-## Architecture
-
-### Components
-
-```
-iphone-offline-voice-transcriber/
-├── ios/                          # iOS app
-│   ├── VoiceTranscriber/         # SwiftUI app
-│   ├── VoiceTranscriberTests/    # Unit tests
-│   └── VoiceTranscriber.xcodeproj
-├── models/                       # Model files
-│   ├── parakeet_tdt_0.6b_v2.onnx # Original model
-│   └── parakeet_tdt_0.6b_v2.mlmodel # CoreML model
-├── scripts/                      # Python utilities
-│   ├── convert_model.py          # ONNX to CoreML conversion
-│   ├── quantize_model.py         # Model quantization
-│   └── test_model.py             # Model validation
-├── docs/                         # Documentation
-│   ├── ARCHITECTURE.md
-│   ├── MODEL_CONVERSION.md
-│   ├── INSTALLATION.md
-│   └── CONTRIBUTING.md
-└── tests/                        # Integration tests
-```
+- **To build**: a Mac with Xcode 16+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
+- **To run**: a physical iPhone with iOS 17.0+ and an A-series/M-series Neural Engine — the simulator cannot meaningfully run Parakeet TDT inference (Core ML falls back to CPU there and is not representative), so treat simulator builds as compile checks only
+- Apple Developer account for on-device signing
+- Wi-Fi or cellular for the one-time ~450–600MB model download; nothing after that
 
 ## Quick Start
 
-### 1. Clone the Repository
-
 ```bash
-git clone https://github.com/yourusername/iphone-offline-voice-transcriber.git
-cd iphone-offline-voice-transcriber
+brew install xcodegen
+git clone https://github.com/hrishi84/iphone-offline-voice-transcriber.git
+cd iphone-offline-voice-transcriber/ios
+xcodegen generate
+open VoiceTranscriber.xcodeproj
 ```
 
-### 2. Download the Model
+In Xcode:
+1. Let Xcode resolve the FluidAudio Swift Package (first open only).
+2. Select the `VoiceTranscriber` target → Signing & Capabilities → choose your team, and change the bundle identifier prefix in `ios/project.yml` (`com.example`) to your own before shipping to a device.
+3. Select your iPhone as the run destination and press `Cmd + R`.
+4. Grant microphone access when prompted.
+5. On first launch, stay connected while the app downloads the Parakeet model. Every run after that works offline.
 
-```bash
-python3 scripts/download_model.py
+## Project Structure
+
+```
+iphone-offline-voice-transcriber/
+├── ios/
+│   ├── project.yml                    # XcodeGen manifest (generates the .xcodeproj — not committed)
+│   ├── VoiceTranscriber/
+│   │   ├── VoiceTranscriberApp.swift  # App entry point
+│   │   ├── Models/                    # UI state enum
+│   │   ├── ViewModels/                # Recording + transcription coordination
+│   │   ├── Views/                     # SwiftUI screens
+│   │   ├── Services/                  # Audio capture + FluidAudio integration
+│   │   ├── Utilities/                 # Deterministic transcript cleanup
+│   │   └── Info.plist
+│   └── VoiceTranscriberTests/         # XCTest unit tests
+├── docs/                              # Architecture, installation, model acquisition, contributing
+└── CHANGELOG.md
 ```
 
-### 3. Convert Model to CoreML
+## Using the App
 
-```bash
-python3 scripts/convert_model.py
-```
+1. Tap **Start** and speak.
+2. Tap **Stop** — the recording is transcribed on-device.
+3. Review the cleaned-up transcript, then **Copy** it or **Share** it directly into Messages, Mail, or any other app.
 
-### 4. Open iOS Project
-
-```bash
-open ios/VoiceTranscriber.xcodeproj
-```
-
-### 5. Build and Run
-
-Select your device and press `Cmd + R` in Xcode.
-
-## Model Details
-
-### NVIDIA Parakeet TDT 0.6B v2
-
-- **Model Size**: ~600MB (unquantized), ~150MB (quantized)
-- **Architecture**: Transformer-based speech recognition
-- **Input**: 16kHz mono audio
-- **Output**: Text transcription
-- **Accuracy**: ~10-15% WER on common datasets
-- **Latency**: 100-300ms for 10s audio on iPhone 14+
-
-### Supported Languages
-
-- English (primary)
-- Additional languages through model variants
-
-## Development
-
-### Prerequisites
-
-```bash
-# Python 3.9+
-python3 --version
-
-# Swift 5.7+
-swift --version
-
-# Xcode 14.0+
-xcode-select --version
-```
-
-### Setup Development Environment
-
-```bash
-# Install Python dependencies
-pip install -r requirements.txt
-
-# Install Swift packages (handled by Xcode)
-```
+There is no keyboard extension or system-wide dictation replacement — iOS keyboard extensions cannot access the microphone at all, so recording always happens in this app; getting the text into another app is a copy/share away. A keyboard-extension-based workflow is listed under Roadmap below as a possible future direction (it would need the model hosted in a shared container the extension can call into).
 
 ## Documentation
 
-- [Architecture & Design](docs/ARCHITECTURE.md)
-- [Model Conversion Guide](docs/MODEL_CONVERSION.md)
-- [Installation Instructions](docs/INSTALLATION.md)
-- [Contributing Guidelines](docs/CONTRIBUTING.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Model Acquisition](docs/MODEL_ACQUISITION.md)
+- [Installation](docs/INSTALLATION.md)
+- [Contributing](docs/CONTRIBUTING.md)
 
-## Performance Optimization
+## Privacy
 
-### Model Quantization
-
-For faster inference and smaller model size:
-
-```bash
-python3 scripts/quantize_model.py --format int8
-```
-
-### Memory Management
-
-The app implements:
-- Efficient audio buffering
-- Model caching
-- Memory-mapped model loading
-
-## Testing
-
-### Unit Tests
-
-```bash
-cd ios && xcodebuild test -scheme VoiceTranscriber
-```
-
-### Integration Tests
-
-```bash
-python3 -m pytest tests/
-```
-
-## Troubleshooting
-
-### Common Issues
-
-**1. Model File Not Found**
-- Ensure model is downloaded: `python3 scripts/download_model.py`
-- Check file permissions: `ls -la models/`
-
-**2. High Latency**
-- Reduce audio chunk size
-- Enable model quantization
-- Check device temperature
-
-**3. Memory Crashes**
-- Reduce model batch size
-- Disable audio buffering
-- Use quantized model
-
-See [Troubleshooting Guide](docs/TROUBLESHOOTING.md) for more details.
-
-## Performance Benchmarks
-
-| Device | Model Size | Inference Time | Memory |
-|--------|-----------|-----------------|---------|
-| iPhone 14 Pro | 150MB (q8) | 120ms | 800MB |
-| iPhone 14 | 150MB (q8) | 180ms | 1GB |
-| iPhone 13 | 150MB (q8) | 250ms | 1.2GB |
-
-## Privacy & Security
-
-- ✅ All processing happens locally on-device
-- ✅ No data transmitted to servers
-- ✅ Audio not stored unless explicitly saved
-- ✅ No analytics or telemetry
+- All audio processing happens on-device.
+- No audio or transcript is sent to a server.
+- Audio is captured in memory only and never written to disk.
+- No analytics, no telemetry.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details
-
-## Citation
-
-```bibtex
-@article{parakeet,
-  title={Parakeet: A Speech Recognition Toolkit},
-  author={NVIDIA},
-  year={2022}
-}
-```
-
-## Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
-
-## Support
-
-For issues, questions, or suggestions:
-- Open an [Issue](https://github.com/yourusername/iphone-offline-voice-transcriber/issues)
-- Start a [Discussion](https://github.com/yourusername/iphone-offline-voice-transcriber/discussions)
-- Email: support@example.com
-
-## Related Projects
-
-- [TypeVoice](https://github.com/warplabshq/typevoice) - Inspiration for this project
-- [Parakeet TDT](https://github.com/NVIDIA/NeMo) - Official Parakeet implementation
-- [CoreML](https://developer.apple.com/coreml/) - Apple's ML framework
+MIT License — see [LICENSE](LICENSE). [FluidAudio](https://github.com/FluidInference/FluidAudio) is used under Apache 2.0.
 
 ## Roadmap
 
-- [ ] Multi-language support
-- [ ] Real-time streaming transcription
-- [ ] Speaker diarization
-- [ ] Punctuation and capitalization
-- [ ] Custom model fine-tuning
-- [ ] macOS/watchOS support
+- [ ] Streaming (live, as-you-speak) transcription using FluidAudio's sliding-window ASR manager
+- [ ] Multilingual support via Parakeet TDT v3
+- [ ] Investigate a keyboard extension / system-wide dictation replacement
+- [ ] On-device punctuation/formatting presets
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for version history.
+See [CHANGELOG.md](CHANGELOG.md).

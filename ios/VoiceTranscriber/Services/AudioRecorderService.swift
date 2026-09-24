@@ -1,109 +1,120 @@
 import AVFoundation
-import Combine
 
-class AudioRecorderService: NSObject, ObservableObject, AVAudioRecorderDelegate {
-    @Published var isRecording = false
-    @Published var duration: String = ""
-    @Published var errorMessage: String?
+enum AudioRecorderError: LocalizedError {
+    case permissionDenied
+    case engineStartFailed(Error)
+    case converterCreationFailed
+    case noSamplesCaptured
 
-    var audioData: Data?
-
-    private var audioRecorder: AVAudioRecorder?
-    private var timer: Timer?
-    private var recordingStartTime: Date?
-
-    override init() {
-        super.init()
-        setupAudioSession()
-    }
-
-    private func setupAudioSession() {
-        let audioSession = AVAudioSession.sharedInstance()
-        do {
-            try audioSession.setCategory(.record, mode: .measurement, options: [])
-            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-        } catch {
-            errorMessage = "Audio session setup failed: \(error.localizedDescription)"
+    var errorDescription: String? {
+        switch self {
+        case .permissionDenied:
+            return "Microphone permission denied."
+        case .engineStartFailed(let error):
+            return "Could not start the audio engine: \(error.localizedDescription)"
+        case .converterCreationFailed:
+            return "Could not set up audio format conversion."
+        case .noSamplesCaptured:
+            return "No audio was captured."
         }
     }
+}
 
-    func requestMicrophonePermission() {
-        AVAudioSession.sharedInstance().requestRecordPermission { granted in
-            DispatchQueue.main.async {
-                if !granted {
-                    self.errorMessage = "Microphone permission denied"
-                }
+/// Captures microphone audio live and exposes it as 16kHz mono Float32
+/// samples, the format FluidAudio's Parakeet model expects. Avoids ever
+/// round-tripping through a file or a raw `Data` reinterpret-cast.
+final class AudioRecorderService {
+    private let targetFormat = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
+        sampleRate: 16_000,
+        channels: 1,
+        interleaved: false
+    )!
+
+    private let engine = AVAudioEngine()
+    private var converter: AVAudioConverter?
+    private var capturedSamples: [Float] = []
+    private let sampleQueue = DispatchQueue(label: "com.example.VoiceTranscriber.audioSampleQueue")
+
+    var isRunning: Bool { engine.isRunning }
+
+    static func requestPermission() async -> Bool {
+        await withCheckedContinuation { continuation in
+            AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                continuation.resume(returning: granted)
             }
         }
     }
 
-    func startRecording() {
-        let fileURL = getDocumentsDirectory().appendingPathComponent("recording.wav")
+    func start() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.record, mode: .measurement, options: [])
+        try session.setActive(true, options: .notifyOthersOnDeactivation)
 
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatLinearPCM),
-            AVSampleRateKey: 16000,
-            AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-        ]
+        let inputNode = engine.inputNode
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+
+        guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+            throw AudioRecorderError.converterCreationFailed
+        }
+        self.converter = converter
+
+        sampleQueue.sync { capturedSamples.removeAll() }
+
+        inputNode.installTap(onBus: 0, bufferSize: 4_096, format: inputFormat) { [weak self] buffer, _ in
+            self?.convertAndStore(buffer)
+        }
 
         do {
-            audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
-            audioRecorder?.delegate = self
-            audioRecorder?.record()
-
-            DispatchQueue.main.async {
-                self.isRecording = true
-                self.recordingStartTime = Date()
-                self.errorMessage = nil
-                self.startTimer()
-            }
+            engine.prepare()
+            try engine.start()
         } catch {
-            errorMessage = "Recording failed: \(error.localizedDescription)"
+            inputNode.removeTap(onBus: 0)
+            throw AudioRecorderError.engineStartFailed(error)
         }
     }
 
-    func stopRecording() {
-        audioRecorder?.stop()
-        timer?.invalidate()
+    /// Stops capture and returns everything recorded as 16kHz mono Float32 samples.
+    func stop() throws -> [Float] {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 
-        let fileURL = getDocumentsDirectory().appendingPathComponent("recording.wav")
-
-        do {
-            audioData = try Data(contentsOf: fileURL)
-        } catch {
-            errorMessage = "Failed to read recording: \(error.localizedDescription)"
+        let samples = sampleQueue.sync { capturedSamples }
+        guard !samples.isEmpty else {
+            throw AudioRecorderError.noSamplesCaptured
         }
-
-        DispatchQueue.main.async {
-            self.isRecording = false
-        }
+        return samples
     }
 
-    func clearRecording() {
-        audioData = nil
-        duration = ""
-        recordingStartTime = nil
-    }
+    private func convertAndStore(_ buffer: AVAudioPCMBuffer) {
+        guard let converter else { return }
 
-    private func startTimer() {
-        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-            if let startTime = self.recordingStartTime {
-                let elapsed = Date().timeIntervalSince(startTime)
-                let minutes = Int(elapsed) / 60
-                let seconds = Int(elapsed) % 60
-                let centiseconds = Int((elapsed * 100).truncatingRemainder(dividingBy: 100))
+        let outputCapacity = AVAudioFrameCount(
+            Double(buffer.frameLength) * (targetFormat.sampleRate / buffer.format.sampleRate) + 1
+        )
+        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputCapacity) else {
+            return
+        }
 
-                DispatchQueue.main.async {
-                    self.duration = String(format: "%02d:%02d.%02d", minutes, seconds, centiseconds)
-                }
+        var error: NSError?
+        var consumed = false
+        converter.convert(to: outputBuffer, error: &error) { _, outStatus in
+            if consumed {
+                outStatus.pointee = .noDataNow
+                return nil
             }
+            consumed = true
+            outStatus.pointee = .haveData
+            return buffer
         }
-    }
 
-    private func getDocumentsDirectory() -> URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        guard error == nil, let channelData = outputBuffer.floatChannelData else { return }
+        let frameCount = Int(outputBuffer.frameLength)
+        let samples = Array(UnsafeBufferPointer(start: channelData[0], count: frameCount))
+
+        sampleQueue.sync {
+            capturedSamples.append(contentsOf: samples)
+        }
     }
 }
