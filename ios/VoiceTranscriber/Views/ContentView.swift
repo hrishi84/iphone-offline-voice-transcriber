@@ -1,124 +1,163 @@
 import SwiftUI
-import AVFoundation
+import UIKit
 
 struct ContentView: View {
-    @StateObject private var audioRecorder = AudioRecorderService()
-    @StateObject private var transcriber = TranscriptionService()
+    @ObservedObject var viewModel: TranscriberViewModel
 
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
-                // Title
                 Text("Voice Transcriber")
                     .font(.largeTitle)
                     .fontWeight(.bold)
 
                 Spacer()
 
-                // Recording Status
-                VStack(spacing: 12) {
-                    Image(systemName: audioRecorder.isRecording ? "mic.fill" : "mic")
-                        .font(.system(size: 48))
-                        .foregroundColor(audioRecorder.isRecording ? .red : .blue)
-                        .animation(.easeInOut(duration: 0.3), value: audioRecorder.isRecording)
+                statusCard
 
-                    Text(audioRecorder.isRecording ? "Recording..." : "Ready")
-                        .font(.headline)
-
-                    if !audioRecorder.duration.isEmpty {
-                        Text(audioRecorder.duration)
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                }
-                .padding(30)
-                .frame(maxWidth: .infinity)
-                .background(Color(.systemGray6))
-                .cornerRadius(12)
-
-                // Transcription Result
-                if !transcriber.result.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Transcription")
-                            .font(.headline)
-
-                        Text(transcriber.result)
-                            .font(.body)
-                            .padding()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(.systemGray6))
-                            .cornerRadius(8)
-                    }
-                    .padding()
-                    .background(Color(.systemGray5))
-                    .cornerRadius(12)
+                if case .result(let text) = viewModel.state {
+                    transcriptCard(text)
                 }
 
                 Spacer()
 
-                // Controls
-                HStack(spacing: 16) {
-                    Button(action: toggleRecording) {
-                        Label(audioRecorder.isRecording ? "Stop" : "Start", systemImage: audioRecorder.isRecording ? "stop.fill" : "play.fill")
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(audioRecorder.isRecording ? Color.red : Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
-                    }
-                    .disabled(transcriber.isProcessing)
+                recordButton
 
-                    if !transcriber.result.isEmpty {
-                        Button(action: clearTranscription) {
-                            Label("Clear", systemImage: "trash")
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color(.systemGray4))
-                                .foregroundColor(.primary)
-                                .cornerRadius(8)
-                        }
-                    }
-                }
-
-                // Error Message
-                if let error = audioRecorder.errorMessage ?? transcriber.errorMessage {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                        Text(error)
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-                    .padding()
-                    .background(Color(.systemOrange).opacity(0.1))
-                    .cornerRadius(8)
+                if case .error(let message) = viewModel.state {
+                    errorBanner(message)
                 }
             }
             .padding()
             .navigationBarTitleDisplayMode(.inline)
-            .onAppear {
-                audioRecorder.requestMicrophonePermission()
-            }
         }
     }
 
-    private func toggleRecording() {
-        if audioRecorder.isRecording {
-            audioRecorder.stopRecording()
-            if let audioData = audioRecorder.audioData {
-                transcriber.transcribe(audioData: audioData)
+    private var statusCard: some View {
+        VStack(spacing: 12) {
+            Image(systemName: isRecording ? "mic.fill" : "mic")
+                .font(.system(size: 48))
+                .foregroundColor(isRecording ? .red : .blue)
+                .animation(.easeInOut(duration: 0.3), value: isRecording)
+
+            Text(statusText)
+                .font(.headline)
+
+            if case .downloadingModel = viewModel.state {
+                Text("First run only — downloading the on-device model. Stay on Wi-Fi.")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .multilineTextAlignment(.center)
             }
-        } else {
-            audioRecorder.startRecording()
+        }
+        .padding(30)
+        .frame(maxWidth: .infinity)
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
+    }
+
+    private func transcriptCard(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Transcription")
+                .font(.headline)
+
+            Text(text)
+                .font(.body)
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.systemGray6))
+                .cornerRadius(8)
+
+            HStack(spacing: 16) {
+                Button(action: { copy(text) }) {
+                    Label("Copy", systemImage: "doc.on.doc")
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color(.systemGray4))
+                        .foregroundColor(.primary)
+                        .cornerRadius(8)
+                }
+
+                ShareLink(item: text) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                }
+
+                Button(action: { viewModel.dismissResult() }) {
+                    Label("Clear", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color(.systemGray4))
+                        .foregroundColor(.primary)
+                        .cornerRadius(8)
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemGray5))
+        .cornerRadius(12)
+    }
+
+    private var recordButton: some View {
+        Button(action: { viewModel.toggleRecording() }) {
+            Label(isRecording ? "Stop" : "Start", systemImage: isRecording ? "stop.fill" : "play.fill")
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(isRecording ? Color.red : Color.blue)
+                .foregroundColor(.white)
+                .cornerRadius(8)
+        }
+        .disabled(isTranscribingOrDownloading)
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        HStack {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundColor(.orange)
+        }
+        .padding()
+        .background(Color(.systemOrange).opacity(0.1))
+        .cornerRadius(8)
+    }
+
+    private func copy(_ text: String) {
+        UIPasteboard.general.string = text
+    }
+
+    private var isRecording: Bool {
+        if case .recording = viewModel.state { return true }
+        return false
+    }
+
+    private var isTranscribingOrDownloading: Bool {
+        switch viewModel.state {
+        case .transcribing, .downloadingModel:
+            return true
+        default:
+            return false
         }
     }
 
-    private func clearTranscription() {
-        transcriber.clearResult()
-        audioRecorder.clearRecording()
+    private var statusText: String {
+        switch viewModel.state {
+        case .idle, .result, .error:
+            return "Ready"
+        case .downloadingModel:
+            return "Downloading model…"
+        case .recording:
+            return "Recording…"
+        case .transcribing:
+            return "Transcribing…"
+        }
     }
 }
 
 #Preview {
-    ContentView()
+    ContentView(viewModel: TranscriberViewModel())
 }
