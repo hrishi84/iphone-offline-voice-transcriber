@@ -21,12 +21,11 @@ enum TranscriptionEngineError: LocalizedError {
 /// Neural Engine. The model itself is downloaded once from Hugging Face and
 /// cached locally by FluidAudio; every call after that is fully offline.
 ///
-/// NOTE: `AsrModels.downloadAndLoad(version:)`, `AsrManager.loadModels(_:)`
-/// and `AsrManager.transcribe(_:source:)` reflect FluidAudio's documented API
-/// shape at the time this was written. This project was authored without a
-/// Swift toolchain available, so these calls have not been compiled against
-/// the real package. If Xcode reports a mismatch after resolving the
-/// FluidAudio package, this is the only file that needs to change.
+/// `AsrManager.transcribe(_:decoderState:language:)` takes a caller-owned
+/// `TdtDecoderState` (it carries the RNN-T decoder's LSTM state across calls
+/// for streaming use). Since this app transcribes one complete recording at
+/// a time rather than streaming, a fresh `TdtDecoderState` is created per
+/// call via `.make()` so recordings never share state.
 final class FluidAudioTranscriptionEngine: TranscriptionEngine {
     private var asrManager: AsrManager?
 
@@ -42,7 +41,8 @@ final class FluidAudioTranscriptionEngine: TranscriptionEngine {
             throw TranscriptionEngineError.modelsNotLoaded
         }
 
-        let result = try await asrManager.transcribe(samples, source: .microphone)
+        var decoderState = TdtDecoderState.make()
+        let result = try await asrManager.transcribe(samples, decoderState: &decoderState)
         let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             throw TranscriptionEngineError.emptyTranscript
